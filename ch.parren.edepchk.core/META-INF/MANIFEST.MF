@@ -1,0 +1,15 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: Dependency Checker Core
+Bundle-SymbolicName: ch.parren.edepchk.core;singleton:=true
+Bundle-Version: 1.0.0.qualifier
+Bundle-Activator: ch.parren.edepchk.core.Activator
+Bundle-Vendor: ch.parren
+Require-Bundle: org.eclipse.core.runtime,
+ org.eclipse.core.resources,
+ org.eclipse.jdt.core;bundle-version="3.6.1"
+Bundle-RequiredExecutionEnvironment: JavaSE-1.6
+Bundle-ActivationPolicy: lazy
+Import-Package: org.eclipse.core.resources,
+ org.eclipse.jdt.core
+Bundle-ClassPath: .

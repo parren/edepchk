@@ -1,0 +1,4 @@
+^.metadata/
+^update-site/
+^ch.parren.edepchk.core/bin/
+

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+   <extension
+         id="edepchkBuilder"
+         name="Dependency Checker Builder"
+         point="org.eclipse.core.resources.builders">
+      <builder
+            hasNature="true">
+         <run
+               class="ch.parren.edepchk.core.builder.Builder">
+         </run>
+      </builder>
+   </extension>
+   <extension
+         id="edepchkNature"
+         name="Dependency Checker Nature"
+         point="org.eclipse.core.resources.natures">
+      <runtime>
+         <run
+               class="ch.parren.edepchk.core.builder.Nature">
+         </run>
+      </runtime>
+      <builder
+            id="ch.parren.edepchk.core.edepchkBuilder">
+      </builder>
+       <requires-nature id="org.eclipse.jdt.core.javanature"/>
+   </extension>
+   <extension
+         id="edepchkProblem"
+         name="Dependency Problem"
+         point="org.eclipse.core.resources.markers">
+      <super
+            type="org.eclipse.core.resources.problemmarker">
+      </super>
+      <persistent
+            value="true">
+      </persistent>
+   </extension>
+   <extension
+         id="edepchkCompiler"
+         name="Dependency Checker Compiler"
+         point="org.eclipse.jdt.core.compilationParticipant">
+      <compilationParticipant
+            class="ch.parren.edepchk.core.builder.Compiler"
+            id="edepchkCompiler">
+      </compilationParticipant>
+   </extension>
+
+</plugin>
