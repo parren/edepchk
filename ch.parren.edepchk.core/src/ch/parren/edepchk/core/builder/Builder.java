@@ -419,7 +419,7 @@ public final class Builder extends IncrementalProjectBuilder {
 					for (final Violation v : e.getValue()) {
 						final String toClassName = fromInternalName(v.toClassName);
 
-						// build message
+						// Build message.
 						final StringBuilder msg = new StringBuilder("Access to ").append(toClassName).append(" denied");
 						String conjunction = " by";
 						final String ruleMsg = v.scope.name();
@@ -432,7 +432,8 @@ public final class Builder extends IncrementalProjectBuilder {
 							msg.append(conjunction).append(" ruleset '").append(setName).append("'");
 						msg.append('.');
 
-						// try to use Java search
+						// Try to use Java search.
+						final boolean[] foundIt = { false };
 						final IType toType = findType(javaProject, toClassName);
 						if (null != toType) {
 							final SearchPattern pat = SearchPattern.createPattern(toType,
@@ -443,9 +444,11 @@ public final class Builder extends IncrementalProjectBuilder {
 							final SearchRequestor requestor = new SearchRequestor() {
 								@Override public void acceptSearchMatch(SearchMatch match) throws CoreException {
 									final String eltClassName = classNameOf(match.getElement());
-									if (null == eltClassName || eltClassName.equals(fromClassName))
+									if (null == eltClassName || eltClassName.equals(fromClassName)) {
 										addMarker(file, msg.toString(), lineNumberOf(unit, match.getOffset()),
 												toMarkerSeverity(v));
+										foundIt[0] = true;
+									}
 								}
 
 								private String classNameOf(Object element) {
@@ -459,11 +462,11 @@ public final class Builder extends IncrementalProjectBuilder {
 							final SearchEngine search = new SearchEngine();
 							search.search(pat, new SearchParticipant[] { SearchEngine.getDefaultSearchParticipant() },
 									scope, requestor, null);
-						} else {
-							// no Java search, so just annotate the class
-							// declaration
-							addMarker(file, msg.toString(), lineNumberOf(unit, type.getNameRange().getOffset()),
-									toMarkerSeverity(v));
+						}
+						if (!foundIt[0]) {
+							// No or unsuccessful Java search, so just annotate the class declaration.
+							addMarker(file, msg.toString() + " (No direct source location found.)",
+									lineNumberOf(unit, type.getNameRange().getOffset()), toMarkerSeverity(v));
 						}
 					}
 				}
