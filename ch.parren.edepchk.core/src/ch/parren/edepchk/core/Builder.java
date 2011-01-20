@@ -24,9 +24,11 @@ import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.jdt.core.ICompilationUnit;
+import org.eclipse.jdt.core.IImportDeclaration;
 import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IMember;
+import org.eclipse.jdt.core.ISourceRange;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.search.IJavaSearchConstants;
@@ -439,14 +441,18 @@ public final class Builder extends IncrementalProjectBuilder {
 							final SearchPattern pat = SearchPattern.createPattern(toType,
 									IJavaSearchConstants.REFERENCES);
 							final IJavaSearchScope scope = SearchEngine.createJavaSearchScope(
-									new IJavaElement[] { type }, IJavaSearchScope.SOURCES);
+									new IJavaElement[] { unit }, IJavaSearchScope.SOURCES);
 							final String fromClassName = fromInternalName(v.fromClassName);
 							final SearchRequestor requestor = new SearchRequestor() {
+
 								@Override public void acceptSearchMatch(SearchMatch match) throws CoreException {
-									final String eltClassName = classNameOf(match.getElement());
+									final Object elt = match.getElement();
+									if (elt instanceof IImportDeclaration)
+										return;
+									final String eltClassName = fromInternalName(classNameOf(elt));
 									if (null == eltClassName || eltClassName.equals(fromClassName)) {
-										addMarker(file, msg.toString(), lineNumberOf(unit, match.getOffset()),
-												toMarkerSeverity(v));
+										addMarker(file, msg.toString(), toMarkerSeverity(v), //
+												match.getOffset(), match.getLength());
 										foundIt[0] = true;
 									}
 								}
@@ -458,6 +464,7 @@ public final class Builder extends IncrementalProjectBuilder {
 										return ((IMember) element).getDeclaringType().getFullyQualifiedName();
 									return null;
 								}
+
 							};
 							final SearchEngine search = new SearchEngine();
 							search.search(pat, new SearchParticipant[] { SearchEngine.getDefaultSearchParticipant() },
@@ -465,14 +472,18 @@ public final class Builder extends IncrementalProjectBuilder {
 						}
 						if (!foundIt[0]) {
 							// No or unsuccessful Java search, so just annotate the class declaration.
+							final ISourceRange range = type.getSourceRange();
 							addMarker(file, msg.toString() + " (No direct source location found.)",
-									lineNumberOf(unit, type.getNameRange().getOffset()), toMarkerSeverity(v));
+									toMarkerSeverity(v), //
+									range.getOffset(), range.getLength());
 						}
 					}
 				}
 			}
 
 			private String fromInternalName(String internalClassName) {
+				if (null == internalClassName)
+					return null;
 				return internalClassName.replace('/', '.').replace('$', '.');
 			}
 
@@ -484,16 +495,6 @@ public final class Builder extends IncrementalProjectBuilder {
 				if (posOfInner < 0)
 					return null;
 				return javaProject.findType(className.substring(0, posOfInner));
-			}
-
-			private int lineNumberOf(ICompilationUnit unit, int offset) throws CoreException {
-				int lineNo = 1;
-				final String source = unit.getSource();
-				if (null != source && source.length() > offset)
-					for (int i = 0; i < offset; i++)
-						if ("\n".indexOf(source.charAt(i)) >= 0)
-							lineNo++;
-				return lineNo;
 			}
 
 			private int toMarkerSeverity(Violation v) {
@@ -510,14 +511,12 @@ public final class Builder extends IncrementalProjectBuilder {
 
 	}
 
-	private void addMarker(IResource file, String message, int lineNumber, int severity) throws CoreException {
+	private void addMarker(IResource file, String message, int severity, int offs, int len) throws CoreException {
 		final IMarker marker = file.createMarker(MARKER_TYPE);
 		marker.setAttribute(IMarker.MESSAGE, message);
 		marker.setAttribute(IMarker.SEVERITY, severity);
-		if (lineNumber == -1) {
-			lineNumber = 1;
-		}
-		marker.setAttribute(IMarker.LINE_NUMBER, lineNumber);
+		marker.setAttribute(IMarker.CHAR_START, offs);
+		marker.setAttribute(IMarker.CHAR_END, offs + len);
 	}
 
 	private void deleteMarkers(IResource res) throws CoreException {
