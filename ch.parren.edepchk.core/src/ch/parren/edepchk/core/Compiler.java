@@ -1,4 +1,4 @@
-package ch.parren.edepchk.core.builder;
+package ch.parren.edepchk.core;
 
 import org.eclipse.jdt.core.compiler.CompilationParticipant;
 

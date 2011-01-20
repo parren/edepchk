@@ -1,4 +1,4 @@
-package ch.parren.edepchk.core.builder;
+package ch.parren.edepchk.core;
 
 import org.eclipse.core.resources.ICommand;
 import org.eclipse.core.resources.IProject;

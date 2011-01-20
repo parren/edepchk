@@ -20,8 +20,6 @@ import org.eclipse.core.runtime.IPath;
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
 
-import ch.parren.edepchk.core.builder.Builder;
-import ch.parren.edepchk.core.builder.Nature;
 
 /**
  * Auto-configures projects to include the Macker nature exactly if they have a

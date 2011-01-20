@@ -1,4 +1,4 @@
-package ch.parren.edepchk.core.builder;
+package ch.parren.edepchk.core;
 
 import java.io.BufferedReader;
 import java.io.File;
