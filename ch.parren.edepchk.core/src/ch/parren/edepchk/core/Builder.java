@@ -176,6 +176,8 @@ public final class Builder extends IncrementalProjectBuilder {
 		private final Collection<ClassPathSet> pathSets = New.linkedList();
 		private final Map<File, FingerPrint> fingerPrints = New.hashMap();
 
+		private int maxErrors = 500;
+
 		public Config() throws Exception {
 			for (String n : CONFIG_NAMES)
 				tryToLoad(n);
@@ -211,6 +213,10 @@ public final class Builder extends IncrementalProjectBuilder {
 					final String trimmed = line.trim();
 					if (trimmed.isEmpty())
 						continue;
+					if (trimmed.startsWith("max-errors:")) {
+						maxErrors = Integer.parseInt(trimmed.substring("max-errors:".length()).trim());
+						continue;
+					}
 					final boolean isRulesFile = Character.isWhitespace(line.charAt(0));
 					if (isRulesFile)
 						if (null == scope)
@@ -294,6 +300,8 @@ public final class Builder extends IncrementalProjectBuilder {
 		private final Map<Config.ClassPathSet, ClassPathSet> pathSetsByConfig = New.hashMap();
 
 		private final Config config;
+		
+		private int errorsFound = 0;
 
 		public Adapter(Config config) {
 			this.config = config;
@@ -395,6 +403,8 @@ public final class Builder extends IncrementalProjectBuilder {
 			}
 
 			@Override protected boolean report(Violation v) {
+				if (++errorsFound > Adapter.this.config.maxErrors)
+					return false;
 				final String className = v.fromClassName;
 				Collection<Violation> found = violations.get(className);
 				if (null == found) {
