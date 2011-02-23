@@ -82,7 +82,7 @@ public final class Builder extends IncrementalProjectBuilder {
 
 	@Override protected IProject[] build(int kind, Map args, IProgressMonitor monitor) throws CoreException {
 		try {
-			if (null == config || kind == FULL_BUILD)
+			if (null == config || kind == FULL_BUILD) {
 				/*
 				 * TODO: This does not properly handle the case where the first
 				 * change you make is to one of the macker rules files. We
@@ -90,7 +90,7 @@ public final class Builder extends IncrementalProjectBuilder {
 				 * haven't cached the fingerprints of the rules files yet.
 				 */
 				config = new Config();
-			else if (!config.isUpToDate()) {
+			} else if (!config.isUpToDate()) {
 				config = new Config();
 				kind = FULL_BUILD;
 			}
@@ -103,10 +103,12 @@ public final class Builder extends IncrementalProjectBuilder {
 				getProject().accept(visitor);
 			} else {
 				final IResourceDelta delta = getDelta(getProject());
-				if (delta == null)
+				if (delta == null) {
+					deleteMarkers(getProject());
 					getProject().accept(visitor);
-				else
+				} else {
 					delta.accept(visitor);
+				}
 			}
 			visitor = null;
 
@@ -300,7 +302,7 @@ public final class Builder extends IncrementalProjectBuilder {
 		private final Map<Config.ClassPathSet, ClassPathSet> pathSetsByConfig = New.hashMap();
 
 		private final Config config;
-		
+
 		private int errorsFound = 0;
 
 		public Adapter(Config config) {
