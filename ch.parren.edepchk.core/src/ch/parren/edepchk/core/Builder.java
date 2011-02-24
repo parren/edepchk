@@ -55,7 +55,7 @@ import ch.parren.jdepchk.rules.parser.RuleSetLoader;
  * <p>
  * Configuration is cached across runs and only refreshed if one of the
  * configuration file timestamps changes (config files or rules files). When the
- * configuration is changed, we run a full macker build instead of an
+ * configuration is changed, we run a full edepchk build instead of an
  * incremental one.
  * <p>
  * Configuration files (edepchk.conf, .edepchk) define which JDepChk rules files
@@ -85,7 +85,7 @@ public final class Builder extends IncrementalProjectBuilder {
 			if (null == config || kind == FULL_BUILD) {
 				/*
 				 * TODO: This does not properly handle the case where the first
-				 * change you make is to one of the macker rules files. We
+				 * change you make is to one of the jdepchk rules files. We
 				 * should do a full build in this case, but don't, because
 				 * haven't cached the fingerprints of the rules files yet.
 				 */

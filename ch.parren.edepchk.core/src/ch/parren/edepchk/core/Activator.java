@@ -20,12 +20,10 @@ import org.eclipse.core.runtime.IPath;
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
 
-
 /**
- * Auto-configures projects to include the Macker nature exactly if they have a
- * macker config file. Config files are called either "emacker.conf" or
- * ".emacker". See {@link Builder} for details on the configuration
- * syntax.
+ * Auto-configures projects to include the EDepChk nature exactly if they have a
+ * corresponding config file. Config files are called either "edepchk.conf" or
+ * ".edepchk". See {@link Builder} for details on the configuration syntax.
  */
 public class Activator implements BundleActivator {
 
