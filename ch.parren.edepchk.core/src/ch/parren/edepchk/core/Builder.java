@@ -47,6 +47,7 @@ import ch.parren.jdepchk.classes.AbstractClassFilesSet;
 import ch.parren.jdepchk.classes.ClassFileReader;
 import ch.parren.jdepchk.classes.ClassReader;
 import ch.parren.jdepchk.rules.RuleSet;
+import ch.parren.jdepchk.rules.parser.FileParseException;
 import ch.parren.jdepchk.rules.parser.RuleSetLoader;
 
 /**
@@ -75,6 +76,7 @@ public final class Builder extends IncrementalProjectBuilder {
 
 	public static final String BUILDER_ID = "ch.parren.edepchk.core.edepchkBuilder";
 	public static final String MARKER_TYPE = "ch.parren.edepchk.core.edepchkProblem";
+	public static final String RULE_MARKER_TYPE = "ch.parren.edepchk.core.edepchkParseError";
 
 	public static final String[] CONFIG_NAMES = { "edepchk.conf", ".edepchk" };
 
@@ -89,9 +91,9 @@ public final class Builder extends IncrementalProjectBuilder {
 				 * should do a full build in this case, but don't, because
 				 * haven't cached the fingerprints of the rules files yet.
 				 */
-				config = new Config();
+				config = parseConfig();
 			} else if (!config.isUpToDate()) {
-				config = new Config();
+				config = parseConfig();
 				kind = FULL_BUILD;
 			}
 
@@ -122,6 +124,11 @@ public final class Builder extends IncrementalProjectBuilder {
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}
+	}
+
+	protected Config parseConfig() throws Exception {
+		getProject().deleteMarkers(RULE_MARKER_TYPE, false, IResource.DEPTH_INFINITE);
+		return new Config();
 	}
 
 	@Override protected void clean(IProgressMonitor monitor) throws CoreException {
@@ -268,7 +275,17 @@ public final class Builder extends IncrementalProjectBuilder {
 				final File file = fullPath.toFile();
 				fingerPrint(file);
 				if (file.exists())
-					ruleSets.add(RuleSetLoader.load(file));
+					try {
+						final RuleSet ruleSet = RuleSetLoader.load(file);
+						ruleSets.add(ruleSet);
+					} catch (FileParseException pe) {
+						final IFile res = getProject().getFile(path);
+						final IMarker marker = res.createMarker(RULE_MARKER_TYPE);
+						marker.setAttribute(IMarker.MESSAGE, pe.cause.getMessage());
+						marker.setAttribute(IMarker.SEVERITY, IMarker.SEVERITY_ERROR);
+						marker.setAttribute(IMarker.CHAR_START, pe.cause.startOffs);
+						marker.setAttribute(IMarker.CHAR_END, pe.cause.endOffs + 1);
+					}
 				return this;
 			}
 
