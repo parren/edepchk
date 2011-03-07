@@ -13,3 +13,4 @@ Bundle-ActivationPolicy: lazy
 Import-Package: org.eclipse.core.resources,
  org.eclipse.jdt.core
 Bundle-ClassPath: .
+Export-Package: ch.parren.edepchk.core
