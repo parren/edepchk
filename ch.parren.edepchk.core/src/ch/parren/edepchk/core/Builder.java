@@ -9,6 +9,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
@@ -24,13 +25,16 @@ import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.jdt.core.ICompilationUnit;
+import org.eclipse.jdt.core.IField;
 import org.eclipse.jdt.core.IImportDeclaration;
 import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IMember;
+import org.eclipse.jdt.core.IMethod;
 import org.eclipse.jdt.core.ISourceRange;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.core.search.IJavaSearchConstants;
 import org.eclipse.jdt.core.search.IJavaSearchScope;
 import org.eclipse.jdt.core.search.SearchEngine;
@@ -446,28 +450,36 @@ public final class Builder extends IncrementalProjectBuilder {
 					if (null == unit)
 						continue;
 
+					// Avoid reporting references to the same element twice (classes in particular).
+					final Set<IJavaElement> seen = New.hashSet();
+
+					// Add untargeted markers only if no targeted marker was found for a given target type.
+					String lastToClassName = null;
+					String lastMessage = null;
+					boolean hadMatch = true;
+
 					final IResource file = unit.getResource();
 					for (final Violation v : e.getValue()) {
 						final String toClassName = fromInternalName(v.toClassName);
+						final String msg = buildMessage(v, toClassName);
 
-						// Build message.
-						final StringBuilder msg = new StringBuilder("Access to ").append(toClassName).append(" denied");
-						String conjunction = " by";
-						final String ruleMsg = v.scope.name();
-						if (null != ruleMsg && !ruleMsg.isEmpty()) {
-							msg.append(conjunction).append(" scope '").append(ruleMsg).append("'");
-							conjunction = " in";
+						if (!toClassName.equals(lastToClassName)) {
+							if (!hadMatch)
+								addUntargetedMarker(type, file, lastMessage);
+							lastToClassName = toClassName;
+							lastMessage = msg;
+							hadMatch = false;
 						}
-						final String setName = v.ruleSet.name();
-						if (null != setName && !setName.isEmpty() && !"<anonymous ruleset>".equals(setName))
-							msg.append(conjunction).append(" ruleset '").append(setName).append("'");
-						msg.append('.');
 
 						// Try to use Java search.
 						final boolean[] foundIt = { false };
 						final IType toType = findType(javaProject, toClassName);
 						if (null != toType) {
-							final SearchPattern pat = SearchPattern.createPattern(toType,
+							final IJavaElement toElt = findElement(toType, v);
+							if (!seen.add(toElt))
+								continue;
+
+							final SearchPattern pat = SearchPattern.createPattern(toElt,
 									IJavaSearchConstants.REFERENCES);
 							final IJavaSearchScope scope = SearchEngine.createJavaSearchScope(
 									new IJavaElement[] { unit }, IJavaSearchScope.SOURCES);
@@ -480,7 +492,7 @@ public final class Builder extends IncrementalProjectBuilder {
 										return;
 									final String eltClassName = fromInternalName(classNameOf(elt));
 									if (null == eltClassName || eltClassName.equals(fromClassName)) {
-										addMarker(file, msg.toString(), toMarkerSeverity(v), //
+										addMarker(file, msg, IMarker.SEVERITY_ERROR, //
 												match.getOffset(), match.getLength());
 										foundIt[0] = true;
 									}
@@ -499,21 +511,47 @@ public final class Builder extends IncrementalProjectBuilder {
 							search.search(pat, new SearchParticipant[] { SearchEngine.getDefaultSearchParticipant() },
 									scope, requestor, null);
 						}
-						if (!foundIt[0]) {
-							// No or unsuccessful Java search, so just annotate the class declaration.
-							final ISourceRange range = type.getSourceRange();
-							addMarker(file, msg.toString() + " (No direct source location found.)",
-									toMarkerSeverity(v), //
-									range.getOffset(), range.getLength());
-						}
+						hadMatch |= foundIt[0];
 					}
+
+					if (null != lastToClassName && !hadMatch)
+						addUntargetedMarker(type, file, lastMessage);
 				}
+			}
+
+			/**
+			 * No or unsuccessful Java search, so just annotate the class
+			 * declaration.
+			 */
+			protected void addUntargetedMarker(IType type, IResource file, String msg) throws JavaModelException,
+					CoreException {
+				final ISourceRange range = type.getNameRange();
+				addMarker(file, msg + " (No direct source location found.)", IMarker.SEVERITY_ERROR, //
+						range.getOffset(), range.getLength());
 			}
 
 			private String fromInternalName(String internalClassName) {
 				if (null == internalClassName)
 					return null;
 				return internalClassName.replace('/', '.').replace('$', '.');
+			}
+
+			protected String buildMessage(final Violation v, String toClassName) {
+				final StringBuilder sb = new StringBuilder("Access to ").append(toClassName);
+				if (null != v.toElementName)
+					sb.append(".").append(v.toElementName);
+				sb.append(" denied");
+				String conjunction = " by";
+				final String ruleMsg = v.scope.name();
+				if (null != ruleMsg && !ruleMsg.isEmpty()) {
+					sb.append(conjunction).append(" scope '").append(ruleMsg).append("'");
+					conjunction = " in";
+				}
+				final String setName = v.ruleSet.name();
+				if (null != setName && !setName.isEmpty() && !"<anonymous ruleset>".equals(setName))
+					sb.append(conjunction).append(" ruleset '").append(setName).append("'");
+				sb.append('.');
+				return sb.toString();
 			}
 
 			private IType findType(IJavaProject javaProject, String className) throws CoreException {
@@ -526,14 +564,29 @@ public final class Builder extends IncrementalProjectBuilder {
 				return javaProject.findType(className.substring(0, posOfInner));
 			}
 
-			private int toMarkerSeverity(Violation v) {
-				return IMarker.SEVERITY_ERROR;
-//				if (RuleSeverity.ERROR == severity)
-//					return IMarker.SEVERITY_ERROR;
-//				else if (RuleSeverity.WARNING == severity)
-//					return IMarker.SEVERITY_WARNING;
-//				else
-//					return IMarker.SEVERITY_INFO;
+			protected IJavaElement findElement(final IType inType, final Violation v) throws JavaModelException {
+				if (null != v.toElementName) {
+					final IJavaElement[] children = inType.getChildren();
+					// TODO There may be a better way than this.
+					for (IJavaElement elt : children) {
+						if (elt instanceof IMember) {
+							final IMember mem = (IMember) elt;
+							if (v.toElementName.equals(mem.getElementName())) {
+								if (mem instanceof IMethod) {
+									final IMethod mtd = (IMethod) mem;
+									final String sig = mtd.getSignature();
+									if (v.toElementDesc.equals(sig))
+										return mtd;
+								} else if (mem instanceof IField) {
+									final IField fld = (IField) mem;
+									if (v.toElementDesc.equals(fld.getTypeSignature()))
+										return fld;
+								}
+							}
+						}
+					}
+				}
+				return inType;
 			}
 
 		}
