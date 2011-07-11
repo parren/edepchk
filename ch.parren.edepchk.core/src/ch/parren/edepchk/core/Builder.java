@@ -49,6 +49,9 @@ import ch.parren.jdepchk.check.Violation;
 import ch.parren.jdepchk.check.ViolationListener;
 import ch.parren.jdepchk.classes.AbstractClassFilesSet;
 import ch.parren.jdepchk.classes.ClassFile;
+import ch.parren.jdepchk.classes.ClassSets;
+import ch.parren.jdepchk.config.OptionsParser;
+import ch.parren.jdepchk.config.OptionsParser.ErrorReport;
 import ch.parren.jdepchk.rules.RuleSet;
 import ch.parren.jdepchk.rules.parser.FileParseException;
 import ch.parren.jdepchk.rules.parser.RuleSetLoader;
@@ -124,12 +127,14 @@ public final class Builder extends IncrementalProjectBuilder {
 			throw ce;
 		} catch (RuntimeException re) {
 			throw re;
+		} catch (ErrorReport e) {
+			throw new RuntimeException(e);
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}
 	}
 
-	protected Config parseConfig() throws Exception {
+	protected Config parseConfig() throws Exception, ErrorReport {
 		getProject().deleteMarkers(RULE_MARKER_TYPE, false, IResource.DEPTH_INFINITE);
 		return new Config();
 	}
@@ -190,7 +195,7 @@ public final class Builder extends IncrementalProjectBuilder {
 
 		private int maxErrors = 500;
 
-		public Config() throws Exception {
+		public Config() throws Exception, ErrorReport {
 			for (String n : CONFIG_NAMES)
 				tryToLoad(n);
 		}
@@ -208,40 +213,57 @@ public final class Builder extends IncrementalProjectBuilder {
 			fingerPrints.put(file, new FingerPrint(file));
 		}
 
-		private void tryToLoad(String fileName) throws Exception {
+		private void tryToLoad(String fileName) throws Exception, ErrorReport {
 			final IFile cfgFile = getProject().getFile(fileName);
 			fingerPrint(cfgFile.getLocation().toFile());
 			if (!cfgFile.exists())
 				return;
+
+			final OptionsParser parser = new OptionsParser() {
+
+				private ClassPathSet scope;
+
+				@Override protected void visitScopeStart(String name) throws IOException, ErrorReport {
+					scope = newScope();
+				}
+
+				@Override protected void visitClasses(String spec) throws IOException, ErrorReport {
+					scope.addPath(spec);
+				}
+
+				@Override protected void visitClassSets(ClassSets classSets) throws IOException, ErrorReport {}
+
+				@Override protected void visitCheckClasses(boolean active) throws IOException, ErrorReport {}
+
+				@Override protected void visitRuleSetStart(String name) throws IOException, ErrorReport {}
+
+				@Override protected void visitRuleSpec(String spec) throws IOException, ErrorReport {
+					scope.addRulesFile(spec);
+				}
+
+				@Override protected void visitRuleSetEnd() throws IOException, ErrorReport {}
+
+				@Override protected void visitExtractAnnotations(boolean active) throws IOException, ErrorReport {}
+
+				@Override protected void visitLocalRulesDir(File dir) throws IOException, ErrorReport {}
+
+				@Override protected void visitGlobalRulesDir(File dir) throws IOException, ErrorReport {}
+
+				@Override protected void visitScopeEnd() throws IOException, ErrorReport {}
+
+				@Override protected void visitArg(String arg, Iterator<String> more, boolean flagUnknown)
+						throws IOException, ErrorReport {
+					if ("--max-errors".equals(arg))
+						maxErrors = Integer.parseInt(more.next());
+					else
+						super.visitArg(arg, more, flagUnknown);
+				}
+
+			};
+
 			final BufferedReader cfgReader = new BufferedReader(new InputStreamReader(cfgFile.getContents()));
 			try {
-				String line;
-				ClassPathSet scope = null;
-				boolean pathStartsNewScope = true;
-				while (null != (line = cfgReader.readLine())) {
-					final int posOfComment = line.indexOf('#');
-					if (posOfComment >= 0)
-						line = line.substring(0, posOfComment);
-					final String trimmed = line.trim();
-					if (trimmed.isEmpty())
-						continue;
-					if (trimmed.startsWith("max-errors:")) {
-						maxErrors = Integer.parseInt(trimmed.substring("max-errors:".length()).trim());
-						continue;
-					}
-					final boolean isRulesFile = Character.isWhitespace(line.charAt(0));
-					if (isRulesFile)
-						if (null == scope)
-							scope = newScope().addRulesFile(trimmed);
-						else
-							scope.addRulesFile(trimmed);
-					else if (null == scope || pathStartsNewScope)
-						// null check keeps compiler happy
-						scope = newScope().addPath(trimmed);
-					else
-						scope.addPath(trimmed);
-					pathStartsNewScope = isRulesFile;
-				}
+				parser.parseOptionsFile(cfgReader);
 			} finally {
 				cfgReader.close();
 			}
@@ -272,7 +294,7 @@ public final class Builder extends IncrementalProjectBuilder {
 				return this;
 			}
 
-			public ClassPathSet addRulesFile(String filePath) throws Exception {
+			public ClassPathSet addRulesFile(String filePath) throws IOException {
 				final IPath path = Path.fromPortableString(filePath);
 				final IPath fullPath = path.isAbsolute() ? path : getProject().getLocation().append(path);
 				final File file = fullPath.toFile();
@@ -283,11 +305,16 @@ public final class Builder extends IncrementalProjectBuilder {
 						ruleSets.add(ruleSet);
 					} catch (FileParseException pe) {
 						final IFile res = getProject().getFile(path);
-						final IMarker marker = res.createMarker(RULE_MARKER_TYPE);
-						marker.setAttribute(IMarker.MESSAGE, pe.cause.getMessage());
-						marker.setAttribute(IMarker.SEVERITY, IMarker.SEVERITY_ERROR);
-						marker.setAttribute(IMarker.CHAR_START, pe.cause.startOffs);
-						marker.setAttribute(IMarker.CHAR_END, pe.cause.endOffs + 1);
+						IMarker marker;
+						try {
+							marker = res.createMarker(RULE_MARKER_TYPE);
+							marker.setAttribute(IMarker.MESSAGE, pe.cause.getMessage());
+							marker.setAttribute(IMarker.SEVERITY, IMarker.SEVERITY_ERROR);
+							marker.setAttribute(IMarker.CHAR_START, pe.cause.startOffs);
+							marker.setAttribute(IMarker.CHAR_END, pe.cause.endOffs + 1);
+						} catch (CoreException e) {
+							throw new RuntimeException(e);
+						}
 					}
 				return this;
 			}

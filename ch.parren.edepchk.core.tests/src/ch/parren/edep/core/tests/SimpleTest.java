@@ -41,7 +41,7 @@ public class SimpleTest {
 
 		// activate through Eclipse
 		final IFile config = project.getFile("edepchk.conf");
-		config.create(new ByteArrayInputStream("bin/\n  rules.jdep\n".getBytes()), true, null);
+		config.create(new ByteArrayInputStream("--classes bin/ --rules rules.jdep".getBytes()), true, null);
 
 		assertNull(project.getNature(Nature.NATURE_ID));
 		project.build(IncrementalProjectBuilder.INCREMENTAL_BUILD, null);
@@ -77,7 +77,7 @@ public class SimpleTest {
 				+ "comp com.example.ui.**\n" //
 		).getBytes()), true, null);
 		final IFile config = project.getFile("edepchk.conf");
-		config.create(new ByteArrayInputStream("bin/\n  rules.jdep\n".getBytes()), true, null);
+		config.create(new ByteArrayInputStream("--classes bin/ --rules rules.jdep".getBytes()), true, null);
 
 		final IPackageFragment core = testProject.createPackage("com.example.core");
 		testProject.createType(core, "Core.java", "public class Core {}");
@@ -120,7 +120,7 @@ public class SimpleTest {
 				+ "comp com.example.**\n" //
 		).getBytes()), true, null);
 		final IFile config = project.getFile("edepchk.conf");
-		config.create(new ByteArrayInputStream("bin/\n  rules.jdep\n".getBytes()), true, null);
+		config.create(new ByteArrayInputStream("--classes bin/ --rules rules.jdep".getBytes()), true, null);
 
 		final IPackageFragment pkg = testProject.createPackage("com.example");
 		testProject.createType(pkg, "Test.java", "public class Test {\n" //
