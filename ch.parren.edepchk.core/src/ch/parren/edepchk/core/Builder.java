@@ -48,8 +48,7 @@ import ch.parren.jdepchk.check.Checker;
 import ch.parren.jdepchk.check.Violation;
 import ch.parren.jdepchk.check.ViolationListener;
 import ch.parren.jdepchk.classes.AbstractClassFilesSet;
-import ch.parren.jdepchk.classes.ClassFileReader;
-import ch.parren.jdepchk.classes.ClassReader;
+import ch.parren.jdepchk.classes.ClassFile;
 import ch.parren.jdepchk.rules.RuleSet;
 import ch.parren.jdepchk.rules.parser.FileParseException;
 import ch.parren.jdepchk.rules.parser.RuleSetLoader;
@@ -379,7 +378,7 @@ public final class Builder extends IncrementalProjectBuilder {
 
 			public void run() throws Exception {
 				final Checker checker = new Checker(this, config.ruleSets);
-				checker.check(new AbstractClassFilesSet<Object>() {
+				final AbstractClassFilesSet<Object> classFilesSet = new AbstractClassFilesSet<Object>() {
 					private IFile currentFile;
 					private String currentDir = "";
 					private String currentRootPath;
@@ -407,14 +406,10 @@ public final class Builder extends IncrementalProjectBuilder {
 					}
 					@Override protected void visit(Visitor visitor, String className, Object context)
 							throws IOException {
-						final ClassReader classFile = new ClassFileReader(className, currentFile.getLocation().toFile());
-						try {
-							visitor.visitClassFile(classFile);
-						} finally {
-							classFile.close();
-						}
+						acceptClassBytes(visitor, new ClassFile(className, currentFile.getLocation().toFile()));
 					}
-				});
+				};
+				classFilesSet.accept(checker.newClassSetVisitor());
 				addViolationMarkers();
 			}
 
@@ -425,7 +420,7 @@ public final class Builder extends IncrementalProjectBuilder {
 				throw new IllegalArgumentException(path);
 			}
 
-			@Override protected boolean report(Violation v) {
+			@Override public boolean report(Violation v) {
 				if (++errorsFound > Adapter.this.config.maxErrors)
 					return false;
 				final String className = v.fromClassName;
