@@ -2,4 +2,5 @@
 ^update-site/
 ^ch.parren.edepchk.core/bin/
 ^ch.parren.edepchk.core.tests/bin/
+^ch.parren.edepchk.core.tests/temp/
 

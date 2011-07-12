@@ -2,6 +2,8 @@ package ch.parren.edepchk.core;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.Arrays;
@@ -49,33 +51,42 @@ import ch.parren.jdepchk.check.Violation;
 import ch.parren.jdepchk.check.ViolationListener;
 import ch.parren.jdepchk.classes.AbstractClassFilesSet;
 import ch.parren.jdepchk.classes.ClassFile;
+import ch.parren.jdepchk.classes.ClassSet;
 import ch.parren.jdepchk.classes.ClassSets;
+import ch.parren.jdepchk.classes.CombinedClassSetVisitor;
 import ch.parren.jdepchk.config.OptionsParser;
 import ch.parren.jdepchk.config.OptionsParser.ErrorReport;
+import ch.parren.jdepchk.extraction.Extractor;
+import ch.parren.jdepchk.extraction.RuleFilesManager;
 import ch.parren.jdepchk.rules.RuleSet;
+import ch.parren.jdepchk.rules.builder.RuleSetBuilder;
 import ch.parren.jdepchk.rules.parser.FileParseException;
 import ch.parren.jdepchk.rules.parser.RuleSetLoader;
 
 /**
- * Runs a JDepChk check on all the added/changed .class files reported to the
- * build.
+ * Runs a JDepChk check (and an extraction if configured) on all the
+ * added/changed .class files reported to the build.
  * <p>
  * Configuration is cached across runs and only refreshed if one of the
  * configuration file timestamps changes (config files or rules files). When the
  * configuration is changed, we run a full edepchk build instead of an
- * incremental one.
+ * incremental one. This happens in particular if extraction changes one of the
+ * rules files.
  * <p>
  * Configuration files (edepchk.conf, .edepchk) define which JDepChk rules files
- * to use for which output paths. They have the following syntax:
+ * to use for which output paths. They follow JDepChk's config file format. Dirs
+ * listed in --classes arguments are assumed to be local output folders.
  * 
  * <pre>
- * a/binary/path/
- * another/binary/path/
- *     a/jdepchk/rules-file.jdep
- *     another/rules-file.jdep # a comment
+ * --scope one
+ * --classes a/binary/path/
+ * --classes another/binary/path/
+ *     --rules a/jdepchk/rules-file.jdep
+ *     --rules another/rules-file.jdep # a comment
  * # a comment
- * a/separate/binary/path/
- *     a/jdepchk/rules-file.jdep
+ * --scope two
+ * --classes a/separate/binary/path/
+ *     --rules a/jdepchk/rules-file.jdep
  * </pre>
  */
 public final class Builder extends IncrementalProjectBuilder {
@@ -90,37 +101,45 @@ public final class Builder extends IncrementalProjectBuilder {
 
 	@Override protected IProject[] build(int kind, Map args, IProgressMonitor monitor) throws CoreException {
 		try {
-			if (null == config || kind == FULL_BUILD) {
-				/*
-				 * TODO: This does not properly handle the case where the first
-				 * change you make is to one of the jdepchk rules files. We
-				 * should do a full build in this case, but don't, because
-				 * haven't cached the fingerprints of the rules files yet.
-				 */
-				config = parseConfig();
-			} else if (!config.isUpToDate()) {
-				config = parseConfig();
-				kind = FULL_BUILD;
-			}
 
-			final Adapter adapter = new Adapter(config);
+			/*
+			 * We do a max of 3 iterations: first might update rules from an
+			 * incremental build, second might update from a subsequent full
+			 * build, third is final check when no rules should change anymore.
+			 */
+			for (int iter = 0; iter < 3; iter++) {
+				if (kind == FULL_BUILD || null == config || !config.isUpToDate()) {
+					/*
+					 * We always do a full check on startup since we don't know
+					 * whether the config changed. Might store config version
+					 * info to a temp cache eventually.
+					 */
+					config = parseConfig();
+					kind = FULL_BUILD;
+				}
 
-			Visitor visitor = new Visitor(adapter);
-			if (kind == FULL_BUILD) {
-				deleteMarkers(getProject());
-				getProject().accept(visitor);
-			} else {
-				final IResourceDelta delta = getDelta(getProject());
-				if (delta == null) {
+				final Adapter adapter = new Adapter(config);
+
+				Visitor visitor = new Visitor(adapter);
+				if (kind == FULL_BUILD) {
 					deleteMarkers(getProject());
 					getProject().accept(visitor);
 				} else {
-					delta.accept(visitor);
+					final IResourceDelta delta = getDelta(getProject());
+					if (delta == null) {
+						deleteMarkers(getProject());
+						getProject().accept(visitor);
+					} else {
+						delta.accept(visitor);
+					}
 				}
-			}
-			visitor = null;
+				visitor = null;
 
-			adapter.run();
+				if (!adapter.run(kind))
+					break;
+
+				kind = FULL_BUILD;
+			}
 			return null;
 
 		} catch (CoreException ce) {
@@ -222,6 +241,7 @@ public final class Builder extends IncrementalProjectBuilder {
 			final OptionsParser parser = new OptionsParser() {
 
 				private ClassPathSet scope;
+				private RuleSetBuilder ruleSet;
 
 				@Override protected void visitScopeStart(String name) throws IOException, ErrorReport {
 					scope = newScope();
@@ -233,21 +253,33 @@ public final class Builder extends IncrementalProjectBuilder {
 
 				@Override protected void visitClassSets(ClassSets classSets) throws IOException, ErrorReport {}
 
-				@Override protected void visitCheckClasses(boolean active) throws IOException, ErrorReport {}
-
-				@Override protected void visitRuleSetStart(String name) throws IOException, ErrorReport {}
-
-				@Override protected void visitRuleSpec(String spec) throws IOException, ErrorReport {
-					scope.addRulesFile(spec);
+				@Override protected void visitCheckClasses(boolean active) throws IOException, ErrorReport {
+					scope.checkClasses = active;
 				}
 
-				@Override protected void visitRuleSetEnd() throws IOException, ErrorReport {}
+				@Override protected void visitRuleSetStart(String name) throws IOException, ErrorReport {
+					ruleSet = new RuleSetBuilder(name);
+				}
 
-				@Override protected void visitExtractAnnotations(boolean active) throws IOException, ErrorReport {}
+				@Override protected void visitRuleSpec(String spec) throws IOException, ErrorReport {
+					scope.addRulesFile(spec, ruleSet);
+				}
 
-				@Override protected void visitLocalRulesDir(File dir) throws IOException, ErrorReport {}
+				@Override protected void visitRuleSetEnd() throws IOException, ErrorReport {
+					scope.addRules(ruleSet.finish());
+				}
 
-				@Override protected void visitGlobalRulesDir(File dir) throws IOException, ErrorReport {}
+				@Override protected void visitExtractAnnotations(boolean active) throws IOException, ErrorReport {
+					scope.extractFromAnnotations = active;
+				}
+
+				@Override protected void visitLocalRulesDir(File dir) throws IOException, ErrorReport {
+					scope.localRulesDir = scope.toAbsDir(dir);
+				}
+
+				@Override protected void visitGlobalRulesDir(File dir) throws IOException, ErrorReport {
+					scope.globalRulesDir = scope.toAbsDir(dir);
+				}
 
 				@Override protected void visitScopeEnd() throws IOException, ErrorReport {}
 
@@ -284,25 +316,51 @@ public final class Builder extends IncrementalProjectBuilder {
 
 		private final class ClassPathSet {
 
-			private final Collection<String> paths = New.linkedList();
-			private final Collection<RuleSet> ruleSets = New.linkedList();
+			final Collection<String> paths = New.linkedList();
+			final Collection<RuleSet> ruleSets = New.linkedList();
+			boolean checkClasses = true;
+			boolean extractFromAnnotations = false;
+			File localRulesDir;
+			File globalRulesDir;
 
-			public ClassPathSet addPath(String path) {
+			public void addPath(String path) {
 				if (path.endsWith("/"))
 					path = path.substring(0, path.length() - 1);
 				paths.add(path);
-				return this;
 			}
 
-			public ClassPathSet addRulesFile(String filePath) throws IOException {
+			public File toAbsDir(File dir) {
+				final IFile res = getProject().getFile(new Path(dir.toString()));
+				return new File(res.getRawLocationURI());
+			}
+
+			public void addRulesFile(String filePath, RuleSetBuilder builder) throws IOException {
+				final boolean scanSubDirs;
+				if (filePath.endsWith("/*/")) {
+					filePath = filePath.substring(0, filePath.length() - 2);
+					scanSubDirs = true;
+				} else
+					scanSubDirs = false;
+
 				final IPath path = Path.fromPortableString(filePath);
 				final IPath fullPath = path.isAbsolute() ? path : getProject().getLocation().append(path);
 				final File file = fullPath.toFile();
+				if (!file.exists())
+					return;
+				if (!file.isDirectory())
+					loadRulesFromFile(builder, path, file);
+				else if (scanSubDirs)
+					loadRulesFromSubDirs(builder, path, file);
+				else
+					loadRulesFromDir(builder, path, file);
+			}
+
+			private void loadRulesFromFile(RuleSetBuilder builder, IPath path, File file) throws FileNotFoundException,
+					IOException {
 				fingerPrint(file);
 				if (file.exists())
 					try {
-						final RuleSet ruleSet = RuleSetLoader.load(file);
-						ruleSets.add(ruleSet);
+						RuleSetLoader.loadInto(file, builder);
 					} catch (FileParseException pe) {
 						final IFile res = getProject().getFile(path);
 						IMarker marker;
@@ -316,7 +374,34 @@ public final class Builder extends IncrementalProjectBuilder {
 							throw new RuntimeException(e);
 						}
 					}
-				return this;
+			}
+
+			private void loadRulesFromDir(RuleSetBuilder builder, IPath path, File dir) throws FileNotFoundException,
+					IOException {
+				final FilenameFilter filter = new FilenameFilter() {
+					@Override public boolean accept(File dir, String name) {
+						return !name.startsWith(".");
+					}
+				};
+				for (File file : dir.listFiles(filter))
+					if (file.isFile())
+						loadRulesFromFile(builder, path.append(file.getName()), file);
+			}
+
+			private void loadRulesFromSubDirs(RuleSetBuilder builder, IPath path, File dir)
+					throws FileNotFoundException, IOException {
+				final FilenameFilter filter = new FilenameFilter() {
+					@Override public boolean accept(File dir, String name) {
+						return !name.startsWith(".");
+					}
+				};
+				for (File sub : dir.listFiles(filter))
+					if (sub.isDirectory())
+						loadRulesFromDir(builder, path.append(sub.getName()), sub);
+			}
+
+			public void addRules(RuleSet ruleSet) {
+				ruleSets.add(ruleSet);
 			}
 
 			public boolean matches(String candidate) {
@@ -368,9 +453,11 @@ public final class Builder extends IncrementalProjectBuilder {
 			return created;
 		}
 
-		public void run() throws Exception {
+		public boolean run(int kind) throws Exception {
+			boolean configChanged = false;
 			for (ClassPathSet pathSet : pathSetsByConfig.values())
-				pathSet.run();
+				configChanged = pathSet.run(kind) || configChanged;
+			return configChanged;
 		}
 
 		private final class ClassPathSet extends ViolationListener {
@@ -403,12 +490,27 @@ public final class Builder extends IncrementalProjectBuilder {
 				classFiles.add(file);
 			}
 
-			public void run() throws Exception {
-				final Checker checker = new Checker(this, config.ruleSets);
+			public boolean run(final int kind) throws Exception {
+				final Checker checker = config.checkClasses ? new Checker(this, config.ruleSets) : null;
+				final RuleFilesManager rulesMgr = config.extractFromAnnotations ? new RuleFilesManager(
+						config.localRulesDir, config.globalRulesDir, false, FULL_BUILD == kind) : null;
+				final Extractor extractor = config.extractFromAnnotations ? new Extractor(rulesMgr) : null;
+
+				final ClassSet.Visitor checkerVisitor = (null == checker) ? null : checker.newClassSetVisitor();
+				final ClassSet.Visitor extractorVisitor = (null == extractor) ? null : extractor.newClassSetVisitor();
+				final ClassSet.Visitor classSetVisitor;
+				if (null == checkerVisitor)
+					classSetVisitor = extractorVisitor;
+				else if (null == extractorVisitor)
+					classSetVisitor = checkerVisitor;
+				else
+					classSetVisitor = new CombinedClassSetVisitor(extractorVisitor, checkerVisitor);
+
 				final AbstractClassFilesSet<Object> classFilesSet = new AbstractClassFilesSet<Object>() {
 					private IFile currentFile;
 					private String currentDir = "";
 					private String currentRootPath;
+					private RuleFilesManager scanningIn = (FULL_BUILD == kind) ? null : rulesMgr;
 					@Override public void accept(Visitor visitor) throws IOException {
 						final Iterator<IFile> files = classFiles.iterator();
 						accept(visitor, null, new Iterator<String>() {
@@ -433,11 +535,18 @@ public final class Builder extends IncrementalProjectBuilder {
 					}
 					@Override protected void visit(Visitor visitor, String className, Object context)
 							throws IOException {
+						if (null != scanningIn)
+							// Mark for deletion unless we find annotations; only in incremental builds.
+							scanningIn.scanning(className);
 						acceptClassBytes(visitor, new ClassFile(className, currentFile.getLocation().toFile()));
 					}
 				};
-				classFilesSet.accept(checker.newClassSetVisitor());
+				classFilesSet.accept(classSetVisitor);
+				if (null != rulesMgr)
+					if (rulesMgr.finish())
+						return true;
 				addViolationMarkers();
+				return false;
 			}
 
 			private String rootPathOf(String path) {
@@ -547,9 +656,20 @@ public final class Builder extends IncrementalProjectBuilder {
 			 */
 			protected void addUntargetedMarker(IType type, IResource file, String msg) throws JavaModelException,
 					CoreException {
-				final ISourceRange range = type.getNameRange();
-				addMarker(file, msg + " (No direct source location found.)", IMarker.SEVERITY_ERROR, //
-						range.getOffset(), range.getLength());
+				try {
+					final ISourceRange range = type.getNameRange();
+					addMarker(file, msg + " (No direct source location found.)", IMarker.SEVERITY_ERROR, //
+							range.getOffset(), range.getLength());
+				} catch (JavaModelException jme) {
+					try {
+						final ISourceRange range = type.getCompilationUnit().getPackageDeclarations()[0].getNameRange();
+						addMarker(file, msg + " (No direct source location found.)", IMarker.SEVERITY_ERROR, //
+								range.getOffset(), range.getLength());
+					} catch (JavaModelException jme2) {
+						addMarker(file, msg + " (No direct source location found.)", IMarker.SEVERITY_ERROR, //
+								0, 1);
+					}
+				}
 			}
 
 			private String fromInternalName(String internalClassName) {

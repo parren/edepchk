@@ -1,6 +1,11 @@
 /* Adapted from the sample in the book "Contributing to Eclipse" by Gamma and Beck. */
 package ch.parren.edep.core.tests;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.IOException;
+
+import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
@@ -8,6 +13,7 @@ import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.Path;
 import org.eclipse.jdt.core.IClasspathEntry;
 import org.eclipse.jdt.core.ICompilationUnit;
 import org.eclipse.jdt.core.IJavaElement;
@@ -41,6 +47,7 @@ public class TestProject {
 		createOutputFolder(binFolder);
 		addSystemLibraries();
 	}
+
 	public IProject getProject() {
 		return project;
 	}
@@ -49,19 +56,35 @@ public class TestProject {
 		return javaProject;
 	}
 
-//	public void addJar(String plugin, String jar) throws MalformedURLException, IOException, JavaModelException {
-//		Path result = findFileInPlugin(plugin, jar);
-//		IClasspathEntry[] oldEntries = javaProject.getRawClasspath();
-//		IClasspathEntry[] newEntries = new IClasspathEntry[oldEntries.length + 1];
-//		System.arraycopy(oldEntries, 0, newEntries, 0, oldEntries.length);
-//		newEntries[oldEntries.length] = JavaCore.newLibraryEntry(result, null, null);
-//		javaProject.setRawClasspath(newEntries, null);
-//	}
+	public void addJar(File jar) throws JavaModelException, IOException {
+		Path path = new Path(jar.getCanonicalPath());
+		IClasspathEntry entry = JavaCore.newLibraryEntry(path, null, null);
+		IClasspathEntry[] oldEntries = javaProject.getRawClasspath();
+		IClasspathEntry[] newEntries = new IClasspathEntry[oldEntries.length + 1];
+		System.arraycopy(oldEntries, 0, newEntries, 0, oldEntries.length);
+		newEntries[oldEntries.length] = entry;
+		javaProject.setRawClasspath(newEntries, null);
+	}
 
 	public IPackageFragment createPackage(String name) throws CoreException {
 		if (sourceFolder == null)
 			sourceFolder = createSourceFolder();
 		return sourceFolder.createPackageFragment(name, false, null);
+	}
+
+	public IFile createPackageInfo(IPackageFragment pack, String annotations, String imports) throws CoreException {
+		StringBuffer buf = new StringBuffer();
+		buf.append(annotations);
+		buf.append("\npackage " + pack.getElementName() + ";\n");
+		buf.append("\n");
+		buf.append(imports);
+
+		final IFile file = ((IFolder) pack.getCorrespondingResource()).getFile("package-info.java");
+		if (file.exists())
+			file.setContents(new ByteArrayInputStream(buf.toString().getBytes()), 0, null);
+		else
+			file.create(new ByteArrayInputStream(buf.toString().getBytes()), true, null);
+		return file;
 	}
 
 	public IType createType(IPackageFragment pack, String cuName, String source) throws JavaModelException {
@@ -115,15 +138,6 @@ public class TestProject {
 		newEntries[oldEntries.length] = JavaRuntime.getDefaultJREContainerEntry();
 		javaProject.setRawClasspath(newEntries, null);
 	}
-
-//	private Path findFileInPlugin(String plugin, String file) throws MalformedURLException, IOException {
-//		IExtensionRegistry registry = Platform.getExtensionRegistry();
-//		IExtension descriptor = registry.getExtension(plugin);
-//		URL pluginURL = descriptor.getInstallURL();
-//		URL jarURL = new URL(pluginURL, file);
-//		URL localJarURL = Platform.asLocalURL(jarURL);
-//		return new Path(localJarURL.getPath());
-//	}
 
 	private void waitForIndexer() throws JavaModelException {
 		new SearchEngine().searchAllTypeNames(null, 0, null, 0, IJavaSearchConstants.ALL_OCCURRENCES,

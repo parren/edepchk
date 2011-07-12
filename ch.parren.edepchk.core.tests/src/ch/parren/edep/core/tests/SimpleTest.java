@@ -3,6 +3,7 @@ package ch.parren.edep.core.tests;
 import static org.junit.Assert.*;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.FileWriter;
 
 import org.eclipse.core.resources.IFile;
@@ -113,6 +114,75 @@ public class SimpleTest {
 		}
 	}
 
+	@Test public void annotationRules() throws Exception {
+		testProject.addJar(new File("../jdepchk/build/jdepchk.jar"));
+
+		final IFile rules = project.getFile("rules.jdep");
+		rules.create(new ByteArrayInputStream(("" //
+				+ "lib $default contains java.**\n" //
+		).getBytes()), true, null);
+		final IFile config = project.getFile("edepchk.conf");
+		config.create(new ByteArrayInputStream(("" //
+				+ " --classes bin/" //
+				+ " --extract-annotations" //
+				+ " --local-rules temp/local-rules/test/" //
+				+ " --global-rules temp/global-rules/test/" //
+				+ " --rule-set local" //
+				+ " --rules rules.jdep" //
+				+ " --rules temp/local-rules/test/" //
+				+ " --rule-set global" //
+				+ " --rules temp/global-rules/*/" //
+		).getBytes()), true, null);
+
+		final IPackageFragment core = testProject.createPackage("com.example.core");
+		testProject.createPackageInfo(core, "@Checked", "import ch.parren.jdepchk.annotations.*;");
+		testProject.createType(core, "Core.java", "public class Core {}");
+		testProject.createType(core, "Core2.java", "public class Core2 {}");
+
+		final IPackageFragment ui = testProject.createPackage("com.example.ui");
+		testProject.createPackageInfo(ui, "@Checked", "import ch.parren.jdepchk.annotations.*;");
+		//"@Checked @Extends(\"com.example.core\")", "import ch.parren.jdepchk.annotations.*;");
+		final IResource uiRes = testProject.createType(ui, "UI.java",
+				"public class UI extends com.example.core.Core {}").getResource();
+
+		assertEquals(0, project.findMarkers(Builder.MARKER_TYPE, true, IResource.DEPTH_INFINITE).length);
+
+		project.build(IncrementalProjectBuilder.INCREMENTAL_BUILD, null);
+		{
+			final IMarker[] markers = project.findMarkers(Builder.MARKER_TYPE, true, IResource.DEPTH_INFINITE);
+			assertEquals(1, markers.length);
+			assertEquals(uiRes.getName(), markers[0].getResource().getName());
+		}
+
+		// update through file system
+		final FileWriter fw = new FileWriter(uiRes.getLocation().toFile());
+		try {
+			fw.write("package com.example.ui;\n\n\n\n\npublic class UI extends com.example.core.Core {\n public com.example.core.Core2 core;\n}");
+		} finally {
+			fw.close();
+		}
+		uiRes.refreshLocal(IResource.DEPTH_INFINITE, null);
+
+		project.build(IncrementalProjectBuilder.INCREMENTAL_BUILD, null);
+		{
+			final IMarker[] markers = project.findMarkers(Builder.MARKER_TYPE, true, IResource.DEPTH_INFINITE);
+			assertEquals(2, markers.length);
+			assertEquals(uiRes.getName(), markers[0].getResource().getName());
+			assertEquals(uiRes.getName(), markers[1].getResource().getName());
+		}
+
+		testProject.createPackageInfo(ui, "@Checked @Allows(\"com.example.core.Core2\")",
+				"import ch.parren.jdepchk.annotations.*;");
+		uiRes.refreshLocal(IResource.DEPTH_INFINITE, null);
+		project.build(IncrementalProjectBuilder.INCREMENTAL_BUILD, null);
+		{
+			final IMarker[] markers = project.findMarkers(Builder.MARKER_TYPE, true, IResource.DEPTH_INFINITE);
+			assertEquals(1, markers.length);
+			assertEquals(uiRes.getName(), markers[0].getResource().getName());
+		}
+
+	}
+
 	@Test public void reportInheritedMemberAccess() throws Exception {
 		final IFile rules = project.getFile("rules.jdep");
 		rules.create(new ByteArrayInputStream(("" //
@@ -135,13 +205,13 @@ public class SimpleTest {
 		assertEquals(2, markers.length);
 		final IMarker m0 = markers[0];
 		assertEquals(
-				"Access to java.io.File denied by scope 'com.example' in ruleset '/home/peo/dev/junit-workspace/Project-1/rules.jdep'.",
+				"Access to java.io.File denied by scope 'com.example' in ruleset 'rules.jdep'.",
 				m0.getAttribute("message"));
 		final int s0 = m0.getAttribute("charStart", -1);
 		final int e0 = m0.getAttribute("charEnd", -1);
 		final IMarker m1 = markers[1];
 		assertEquals(
-				"Access to java.io.PrintStream.println denied by scope 'com.example' in ruleset '/home/peo/dev/junit-workspace/Project-1/rules.jdep'.",
+				"Access to java.io.PrintStream.println denied by scope 'com.example' in ruleset 'rules.jdep'.",
 				m1.getAttribute("message"));
 		final int s1 = m1.getAttribute("charStart", -1);
 		final int e1 = m1.getAttribute("charEnd", -1);
