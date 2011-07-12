@@ -261,8 +261,16 @@ public final class Builder extends IncrementalProjectBuilder {
 					ruleSet = new RuleSetBuilder(name);
 				}
 
-				@Override protected void visitRuleSpec(String spec) throws IOException, ErrorReport {
-					scope.addRulesFile(spec, ruleSet);
+				@Override protected void visitRulesInFile(File file) throws IOException, ErrorReport {
+					scope.addRulesInFile(file, ruleSet);
+				}
+
+				@Override protected void visitRulesInDir(File dir) throws IOException, ErrorReport {
+					scope.addRulesInDir(dir, ruleSet);
+				}
+
+				@Override protected void visitRulesInSubDirs(File dir) throws IOException, ErrorReport {
+					scope.addRulesInSubDirs(dir, ruleSet);
 				}
 
 				@Override protected void visitRuleSetEnd() throws IOException, ErrorReport {
@@ -334,25 +342,22 @@ public final class Builder extends IncrementalProjectBuilder {
 				return new File(res.getRawLocationURI());
 			}
 
-			public void addRulesFile(String filePath, RuleSetBuilder builder) throws IOException {
-				final boolean scanSubDirs;
-				if (filePath.endsWith("/*/")) {
-					filePath = filePath.substring(0, filePath.length() - 2);
-					scanSubDirs = true;
-				} else
-					scanSubDirs = false;
-
-				final IPath path = Path.fromPortableString(filePath);
+			public void addRulesInFile(File relFile, RuleSetBuilder builder) throws IOException {
+				final IPath path = Path.fromOSString(relFile.getPath());
 				final IPath fullPath = path.isAbsolute() ? path : getProject().getLocation().append(path);
-				final File file = fullPath.toFile();
-				if (!file.exists())
-					return;
-				if (!file.isDirectory())
-					loadRulesFromFile(builder, path, file);
-				else if (scanSubDirs)
-					loadRulesFromSubDirs(builder, path, file);
-				else
-					loadRulesFromDir(builder, path, file);
+				loadRulesFromFile(builder, path, fullPath.toFile());
+			}
+
+			public void addRulesInDir(File relDir, RuleSetBuilder builder) throws IOException {
+				final IPath path = Path.fromOSString(relDir.getPath());
+				final IPath fullPath = path.isAbsolute() ? path : getProject().getLocation().append(path);
+				loadRulesFromDir(builder, path, fullPath.toFile());
+			}
+
+			public void addRulesInSubDirs(File relDir, RuleSetBuilder builder) throws IOException {
+				final IPath path = Path.fromOSString(relDir.getPath());
+				final IPath fullPath = path.isAbsolute() ? path : getProject().getLocation().append(path);
+				loadRulesFromSubDirs(builder, path, fullPath.toFile());
 			}
 
 			private void loadRulesFromFile(RuleSetBuilder builder, IPath path, File file) throws FileNotFoundException,
@@ -378,6 +383,8 @@ public final class Builder extends IncrementalProjectBuilder {
 
 			private void loadRulesFromDir(RuleSetBuilder builder, IPath path, File dir) throws FileNotFoundException,
 					IOException {
+				if (!dir.exists())
+					return;
 				final FilenameFilter filter = new FilenameFilter() {
 					@Override public boolean accept(File dir, String name) {
 						return !name.startsWith(".");
@@ -390,6 +397,8 @@ public final class Builder extends IncrementalProjectBuilder {
 
 			private void loadRulesFromSubDirs(RuleSetBuilder builder, IPath path, File dir)
 					throws FileNotFoundException, IOException {
+				if (!dir.exists())
+					return;
 				final FilenameFilter filter = new FilenameFilter() {
 					@Override public boolean accept(File dir, String name) {
 						return !name.startsWith(".");
