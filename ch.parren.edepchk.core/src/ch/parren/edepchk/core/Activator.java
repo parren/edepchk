@@ -95,6 +95,7 @@ public class Activator implements BundleActivator {
 	private void configureProject(IProject project) throws CoreException {
 		if (!project.isOpen())
 			return;
+		project.refreshLocal(IResource.DEPTH_ZERO, null);
 		final IProjectDescription desc = project.getDescription();
 		final boolean hasNature = desc.hasNature(Nature.NATURE_ID);
 		final boolean hasConfig = hasConfig(project);
